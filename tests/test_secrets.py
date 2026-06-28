@@ -56,3 +56,20 @@ def test_resolve_secret_propagates_google_errors() -> None:
 
     with pytest.raises(PermissionDenied):
         resolve_secret(client, project="vk8", secret_name="vk-token", timeout_seconds=2.0)
+
+
+@pytest.mark.parametrize(
+    ("project", "secret_name", "version"),
+    [
+        pytest.param("vk8/bad", "vk-token", "latest", id="project_slash"),
+        pytest.param("vk8", "vk/token", "latest", id="secret_slash"),
+        pytest.param("vk8", "vk-token", "1/2", id="version_slash"),
+        pytest.param("vk8", "vk-token", "latest/extra", id="version_resource_suffix"),
+    ],
+)
+def test_resolve_secret_rejects_path_altering_resource_components(project: str, secret_name: str, version: str) -> None:
+    client = FakeSecretClient(FakeResponse(FakePayload(b"token")))
+
+    with pytest.raises(ValueError):
+        resolve_secret(client, project=project, secret_name=secret_name, version=version, timeout_seconds=2.0)
+    assert client.requests == []

@@ -61,10 +61,11 @@ def test_run_query_returns_affected_rows() -> None:
         timeout_seconds=4,
     )
 
-    assert result.job_id == "job_1"
+    assert result.job_id.startswith("job_1_")
     assert result.skipped_existing_job is False
     assert result.affected_rows == 7
     assert job.result_timeouts == [4]
+    assert client.query_calls[0][1] == result.job_id
     assert client.query_calls[0][4].labels == {"Service": "owner_worker"}
     assert client.query_calls[0][4].maximum_bytes_billed == 10
 
@@ -86,7 +87,9 @@ def test_run_query_resumes_conflicting_job_without_concrete_query_job() -> None:
 
     assert result.skipped_existing_job is True
     assert result.affected_rows == 3
-    assert client.get_job_calls == [("job-1", "EU")]
+    assert len(client.get_job_calls) == 1
+    assert client.get_job_calls[0][0].startswith("job-1_")
+    assert client.get_job_calls[0][1] == "EU"
 
 
 def test_run_query_raises_on_job_error() -> None:
@@ -97,7 +100,7 @@ def test_run_query_raises_on_job_error() -> None:
     with pytest.raises(BigQueryQueryError) as exc_info:
         runner.run_query(sql="bad", job_id="bad", labels={}, query_parameters=None, location="EU", maximum_bytes_billed=None, timeout_seconds=1)
 
-    assert exc_info.value.job_id == "bad"
+    assert exc_info.value.job_id.startswith("bad_")
 
 
 def test_run_query_raises_timeout_with_job_id() -> None:
@@ -108,4 +111,13 @@ def test_run_query_raises_timeout_with_job_id() -> None:
     with pytest.raises(BigQueryQueryTimeoutError) as exc_info:
         runner.run_query(sql="select 1", job_id="slow", labels={}, query_parameters=None, location="EU", maximum_bytes_billed=None, timeout_seconds=1)
 
-    assert exc_info.value.job_id == "slow"
+    assert exc_info.value.job_id.startswith("slow_")
+
+
+def test_run_query_job_id_changes_when_sql_changes() -> None:
+    first = BigQueryQueryRunner.content_bound_job_id("job", "select 1", {}, None, None)
+    second = BigQueryQueryRunner.content_bound_job_id("job", "select 2", {}, None, None)
+
+    assert first != second
+    assert first.startswith("job_")
+    assert second.startswith("job_")

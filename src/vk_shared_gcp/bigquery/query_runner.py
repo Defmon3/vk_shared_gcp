@@ -8,6 +8,8 @@ File: query_runner.py
 BigQuery query runner with conflict resume support.
 """
 
+import hashlib
+import json
 from collections.abc import Sequence
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
@@ -20,6 +22,7 @@ from google.cloud import bigquery
 from vk_shared_gcp.bigquery.identifiers import label_value, make_query_job_id
 
 BigQueryQueryParameter = bigquery.ScalarQueryParameter | bigquery.ArrayQueryParameter | bigquery.StructQueryParameter
+QUERY_JOB_IDENTITY_HASH_LENGTH = 16
 
 
 class AwaitableJob(Protocol):
@@ -103,8 +106,8 @@ class BigQueryQueryRunner:
         timeout_seconds: int | float | None,
     ) -> BigQueryQueryResult:
         """Run a BigQuery query or resume a conflicting existing job."""
-        safe_job_id = make_query_job_id(job_id)
         safe_labels = {key: label_value(value) for key, value in labels.items()}
+        safe_job_id = make_query_job_id(self.content_bound_job_id(job_id, sql, safe_labels, query_parameters, maximum_bytes_billed))
         job_config = bigquery.QueryJobConfig(query_parameters=list(query_parameters or []), labels=safe_labels, maximum_bytes_billed=maximum_bytes_billed)
         skipped_existing_job = False
 
@@ -119,6 +122,25 @@ class BigQueryQueryRunner:
             raise BigQueryQueryError(safe_job_id, job.error_result)
 
         return BigQueryQueryResult(job_id=safe_job_id, skipped_existing_job=skipped_existing_job, affected_rows=job.num_dml_affected_rows)
+
+    @staticmethod
+    def content_bound_job_id(
+        job_id: str,
+        sql: str,
+        labels: dict[str, str],
+        query_parameters: Sequence[BigQueryQueryParameter] | None,
+        maximum_bytes_billed: int | None,
+    ) -> str:
+        """Bind the caller job id to the query text and execution inputs."""
+        payload = {
+            "sql": sql,
+            "labels": labels,
+            "query_parameters": [parameter.to_api_repr() for parameter in query_parameters or []],
+            "maximum_bytes_billed": maximum_bytes_billed,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()[:QUERY_JOB_IDENTITY_HASH_LENGTH]
+        return f"{job_id}_{digest}"
 
     @staticmethod
     def _await_job(job: BigQueryJob, job_id: str, timeout_seconds: int | float | None) -> None:
