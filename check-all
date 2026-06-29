@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-uvx ruff check src tests
-uvx black --check src tests
+uv run ruff check src tests
+uv run ruff format --check src tests
 uv run mypy --config-file pyproject.toml src
 uv run python -m pytest tests -c pyproject.toml -p no:cacheprovider -q
